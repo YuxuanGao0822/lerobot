@@ -67,7 +67,7 @@ def make_xvla_pre_post_processors(
         ),
         XVLAImageToFloatProcessorStep(),
         XVLAImageNetNormalizeProcessorStep(),
-        XVLAAddDomainIdProcessorStep(),
+        XVLAAddDomainIdProcessorStep(domain_id=config.domain_id),
         steps.to_device,
         steps.normalize,
     ]
@@ -409,7 +409,8 @@ class XVLAAddDomainIdProcessorStep(ProcessorStep):
     which is used by XVLA to identify different robot embodiments or task domains.
 
     Args:
-        domain_id: The domain ID to add (default: 3)
+        domain_id: The domain ID to add (default: 0). Fine-tuning should set
+            the pretrained domain matching the dataset when one is available.
     """
 
     domain_id: int = 0

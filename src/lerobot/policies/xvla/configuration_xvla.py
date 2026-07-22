@@ -123,6 +123,10 @@ class XVLAConfig(PreTrainedConfig):
     max_state_dim: int = 32
     max_action_dim: int = 20  # Maximum action dimension for padding (used by "auto" action mode)
     domain_feature_key: str | None = None
+    # Pretrained X-VLA domain embedding. The released model uses 3 for LIBERO
+    # and 6 for RoboTwin 2.0. Keeping this in the policy config makes training
+    # and evaluation checkpoints self-describing.
+    domain_id: int = 0
 
     # Vision preprocessing
     resize_imgs_with_padding: tuple[int, int] | None = None
@@ -163,6 +167,10 @@ class XVLAConfig(PreTrainedConfig):
             raise ValueError("`num_image_views` must be > 0 when specified.")
         if self.dtype not in ["bfloat16", "float32"]:
             raise ValueError(f"Invalid dtype: {self.dtype}")
+        if not 0 <= self.domain_id < self.num_domains:
+            raise ValueError(
+                f"`domain_id` ({self.domain_id}) must be in [0, {self.num_domains})."
+            )
         self._florence_config_obj: Florence2Config | None = None
 
     def get_florence_config(self) -> Florence2Config:

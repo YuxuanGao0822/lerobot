@@ -348,6 +348,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 "action_names": getattr(active_cfg, "action_feature_names", None),
             }
             postprocessor_overrides["absolute_actions_processor"] = {"enabled": True}
+        if hasattr(active_cfg, "domain_id"):
+            preprocessor_overrides["xvla_add_domain_id"] = {
+                "domain_id": int(active_cfg.domain_id),
+            }
         processor_kwargs["preprocessor_overrides"] = preprocessor_overrides
         processor_kwargs["postprocessor_overrides"] = postprocessor_overrides
 

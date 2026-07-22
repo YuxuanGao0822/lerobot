@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+
+# Launch one non-drifting VLA post-training run. This file is intended for the
+# remote training server only; it is safe to inspect or invoke with MODE=dry-run
+# without loading a model or dataset.
+
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: bash experiments/driftingvla/baselines/run_one.sh MODEL BENCHMARK SEED
+
+MODEL:      pi0 | pi05 | smolvla | xvla | groot
+BENCHMARK:  libero | robotwin
+SEED:       integer, normally 1000, 1001, or 1002
+
+Environment variables:
+  MODE             dry-run (default), smoke, or train
+  NUM_PROCESSES    number of DDP workers (default: 8)
+  GPU_IDS          CUDA device list (default: 0,1,2,3,4,5,6,7)
+  BATCH_SIZE       per-process batch size (default: 4; global batch 32 on 8 GPUs)
+  OUTPUT_ROOT      output root (default: outputs/baselines)
+  WANDB_ENABLE     true or false (default: false)
+  NUM_WORKERS      workers per process (default: 4)
+  PREFETCH_FACTOR  dataloader prefetch factor (default: 2)
+  HF_HOME          optional Hugging Face cache location
+
+Examples:
+  MODE=dry-run bash experiments/driftingvla/baselines/run_one.sh pi05 libero 1000
+  MODE=smoke bash experiments/driftingvla/baselines/run_one.sh pi05 libero 1000
+  MODE=train WANDB_ENABLE=true bash experiments/driftingvla/baselines/run_one.sh pi05 libero 1000
+EOF
+}
+
+if [[ $# -ne 3 ]]; then
+  usage >&2
+  exit 2
+fi
+
+model=$1
+benchmark=$2
+seed=$3
+
+case "$model" in
+  pi0|pi05|smolvla|xvla|groot) ;;
+  *) echo "Unsupported MODEL: $model" >&2; usage >&2; exit 2 ;;
+esac
+
+case "$benchmark" in
+  libero|robotwin) ;;
+  *) echo "Unsupported BENCHMARK: $benchmark" >&2; usage >&2; exit 2 ;;
+esac
+
+if [[ ! "$seed" =~ ^[0-9]+$ ]]; then
+  echo "SEED must be a non-negative integer: $seed" >&2
+  exit 2
+fi
+
+mode=${MODE:-dry-run}
+case "$mode" in
+  dry-run|smoke|train) ;;
+  *) echo "MODE must be dry-run, smoke, or train: $mode" >&2; exit 2 ;;
+esac
+
+num_processes=${NUM_PROCESSES:-8}
+gpu_ids=${GPU_IDS:-0,1,2,3,4,5,6,7}
+batch_size=${BATCH_SIZE:-4}
+output_root=${OUTPUT_ROOT:-outputs/baselines}
+wandb_enable=${WANDB_ENABLE:-false}
+num_workers=${NUM_WORKERS:-4}
+prefetch_factor=${PREFETCH_FACTOR:-2}
+
+if [[ "$mode" == "train" ]]; then
+  steps=60000
+  save_freq=20000
+  log_freq=100
+else
+  steps=2
+  save_freq=2
+  log_freq=1
+fi
+
+dataset_repo=lerobot/libero
+if [[ "$benchmark" == "robotwin" ]]; then
+  dataset_repo=lerobot/robotwin_unified
+fi
+
+run_dir="${output_root}/${mode}/${benchmark}/${model}/seed_${seed}"
+log_dir="${output_root}/logs/${mode}/${benchmark}/${model}"
+log_file="${log_dir}/seed_${seed}.log"
+
+common_args=(
+  "--dataset.repo_id=${dataset_repo}"
+  "--policy.push_to_hub=false"
+  "--batch_size=${batch_size}"
+  "--steps=${steps}"
+  "--save_checkpoint=true"
+  "--save_freq=${save_freq}"
+  "--save_checkpoint_to_hub=false"
+  "--output_dir=${run_dir}"
+  "--job_name=${model}_${benchmark}_seed${seed}"
+  "--seed=${seed}"
+  "--env_eval_freq=0"
+  "--eval_steps=0"
+  "--log_freq=${log_freq}"
+  "--num_workers=${num_workers}"
+  "--prefetch_factor=${prefetch_factor}"
+  "--persistent_workers=true"
+  "--wandb.enable=${wandb_enable}"
+  "--wandb.disable_artifact=true"
+)
+
+policy_args=()
+case "$model" in
+  pi0)
+    policy_args=(
+      "--policy.type=pi0"
+      "--policy.pretrained_path=lerobot/pi0_base"
+      "--policy.dtype=bfloat16"
+      "--policy.gradient_checkpointing=true"
+      "--policy.compile_model=false"
+      "--policy.freeze_vision_encoder=false"
+      "--policy.train_expert_only=false"
+    )
+    ;;
+  pi05)
+    policy_args=(
+      "--policy.type=pi05"
+      "--policy.pretrained_path=lerobot/pi05_base"
+      "--policy.dtype=bfloat16"
+      "--policy.gradient_checkpointing=true"
+      "--policy.compile_model=false"
+      "--policy.freeze_vision_encoder=false"
+      "--policy.train_expert_only=false"
+    )
+    ;;
+  smolvla)
+    # Keep SmolVLA's released post-training recipe explicit. Its Drift partner
+    # must use exactly the same frozen/trainable partition for a fair ablation.
+    policy_args=(
+      "--policy.type=smolvla"
+      "--policy.pretrained_path=lerobot/smolvla_base"
+      "--policy.compile_model=false"
+      "--policy.freeze_vision_encoder=true"
+      "--policy.train_expert_only=true"
+      "--policy.train_state_proj=true"
+    )
+    ;;
+  xvla)
+    domain_id=3
+    if [[ "$benchmark" == "robotwin" ]]; then
+      domain_id=6
+    fi
+    policy_args=(
+      "--policy.type=xvla"
+      "--policy.pretrained_path=lerobot/xvla-base"
+      "--policy.dtype=bfloat16"
+      "--policy.action_mode=auto"
+      "--policy.domain_id=${domain_id}"
+      "--policy.freeze_vision_encoder=false"
+      "--policy.freeze_language_encoder=false"
+      "--policy.train_policy_transformer=true"
+      "--policy.train_soft_prompts=true"
+    )
+    ;;
+  groot)
+    embodiment_tag=new_embodiment
+    if [[ "$benchmark" == "libero" ]]; then
+      embodiment_tag=libero_sim
+    fi
+    policy_args=(
+      "--policy.type=groot"
+      "--policy.base_model_path=nvidia/GR00T-N1.7-3B"
+      "--policy.embodiment_tag=${embodiment_tag}"
+      "--policy.use_bf16=true"
+      "--policy.model_params_fp32=true"
+      "--policy.tune_llm=false"
+      "--policy.tune_visual=false"
+      "--policy.tune_projector=true"
+      "--policy.tune_diffusion_model=true"
+      "--policy.tune_vlln=true"
+      "--policy.max_steps=${steps}"
+    )
+    ;;
+esac
+
+train_entry=$(command -v lerobot-train || true)
+if [[ -z "$train_entry" ]]; then
+  train_entry=lerobot-train
+fi
+
+cmd=(
+  accelerate launch
+  --multi_gpu
+  "--num_processes=${num_processes}"
+  "$train_entry"
+  "${common_args[@]}"
+  "${policy_args[@]}"
+)
+
+printf 'Run: model=%s benchmark=%s seed=%s mode=%s\n' "$model" "$benchmark" "$seed" "$mode"
+printf 'Dataset: %s\n' "$dataset_repo"
+printf 'DDP: %s processes; per-process batch=%s; global batch=%s\n' \
+  "$num_processes" "$batch_size" "$((num_processes * batch_size))"
+printf 'Output: %s\n' "$run_dir"
+printf 'Command:'
+printf ' %q' env "CUDA_VISIBLE_DEVICES=${gpu_ids}" "${cmd[@]}"
+printf '\n'
+
+if [[ "$mode" == "dry-run" ]]; then
+  exit 0
+fi
+
+if [[ -e "$run_dir" ]]; then
+  echo "Refusing to overwrite existing run directory: $run_dir" >&2
+  echo "Resume it with resume_one.sh or choose a different OUTPUT_ROOT." >&2
+  exit 1
+fi
+
+mkdir -p "$log_dir"
+CUDA_VISIBLE_DEVICES="$gpu_ids" "${cmd[@]}" 2>&1 | tee "$log_file"
