@@ -96,6 +96,14 @@ class TrainPipelineConfig(HubMixin):
     # Set to True to use deterministic cuDNN algorithms for reproducibility.
     # This disables cudnn.benchmark and may reduce training speed by ~10-20 percent.
     cudnn_deterministic: bool = False
+    # DDP synchronizes registered model buffers from rank 0 before every forward by default.
+    # Transformer VLAs generally only have immutable positional/rotary buffers, so experiments
+    # may disable this synchronization to avoid unnecessary collectives. Keep the upstream-safe
+    # default here; benchmark launchers opt out explicitly after auditing their model families.
+    ddp_broadcast_buffers: bool = True
+    # Some supported policies use conditional branches whose parameters are not touched by every
+    # forward. Preserve the existing DDP behavior while making it explicit in saved train configs.
+    ddp_find_unused_parameters: bool = True
     # Number of workers for the dataloader.
     num_workers: int = 4
     batch_size: int = 8
@@ -113,6 +121,10 @@ class TrainPipelineConfig(HubMixin):
     save_checkpoint: bool = True
     # Checkpoint is saved every `save_freq` training iterations and after the last training step.
     save_freq: int = 20_000
+    # Optional exact checkpoint steps. When non-empty, this replaces the periodic `save_freq`
+    # rule and no implicit final checkpoint is added. This is useful when the desired artifact
+    # budget is not an integer periodic schedule from step zero.
+    checkpoint_steps: list[int] = field(default_factory=list)
     use_policy_training_preset: bool = True
     optimizer: OptimizerConfig | None = None
     scheduler: LRSchedulerConfig | None = None
@@ -213,6 +225,13 @@ class TrainPipelineConfig(HubMixin):
 
     def validate(self) -> None:
         self._resolve_pretrained_from_cli()
+
+        if any(step <= 0 or step > self.steps for step in self.checkpoint_steps):
+            raise ValueError(
+                f"Every checkpoint step must be in [1, steps={self.steps}], got {self.checkpoint_steps}."
+            )
+        if len(set(self.checkpoint_steps)) != len(self.checkpoint_steps):
+            raise ValueError(f"checkpoint_steps contains duplicates: {self.checkpoint_steps}")
 
         if self.policy is None and self.reward_model is None:
             raise ValueError(

@@ -2,7 +2,7 @@
 
 # Resume one interrupted baseline run from checkpoints/last using the same DDP
 # world size. The saved train config supplies model, dataset, batch size, and the
-# 60k target; CLI values below only select the checkpoint and output location.
+# 50k target; CLI values below only select the checkpoint and output location.
 
 set -euo pipefail
 
@@ -43,6 +43,13 @@ cmd=(
   "--output_dir=${run_dir}"
 )
 
+if [[ -n "${SAVE_FREQ_OVERRIDE:-}" ]]; then
+  cmd+=("--save_freq=${SAVE_FREQ_OVERRIDE}")
+fi
+if [[ -n "${CHECKPOINT_STEPS_OVERRIDE:-}" ]]; then
+  cmd+=("--checkpoint_steps=${CHECKPOINT_STEPS_OVERRIDE}")
+fi
+
 printf 'Resume command:'
 printf ' %q' env "CUDA_VISIBLE_DEVICES=${gpu_ids}" "${cmd[@]}"
 printf '\n'
@@ -53,4 +60,3 @@ fi
 
 mkdir -p "$log_dir"
 CUDA_VISIBLE_DEVICES="$gpu_ids" "${cmd[@]}" 2>&1 | tee -a "$log_file"
-

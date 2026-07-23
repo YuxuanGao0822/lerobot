@@ -16,8 +16,8 @@ training run per simulator task:
 | RoboTwin 2.0 | `lerobot/robotwin_unified` | the unified 50-task dataset |
 
 The five baselines are `pi0`, `pi05`, `smolvla`, `xvla`, and `groot`. Every
-model/benchmark pair uses seeds `1000`, `1001`, and `1002`; every seed saves
-steps 20k, 40k, and 60k. Therefore:
+model/benchmark pair uses seeds `1000`, `1001`, and `1002`; every seed trains to
+50k and saves exactly steps 30k, 40k, and 50k. Therefore:
 
 - one model/benchmark pair: 3 runs and 9 checkpoints;
 - full matrix: 30 runs and 90 checkpoints.
@@ -25,7 +25,20 @@ steps 20k, 40k, and 60k. Therefore:
 All runs use per-process batch 4 on 8 DDP workers (global batch 32). This holds
 the number of training examples per optimizer step constant across model
 families. Do not increase the smaller models' batch size in the paper runs;
-that would change the data budget represented by a 20k/40k/60k checkpoint.
+that would change the data budget represented by a 30k/40k/50k checkpoint.
+The launcher also sets `ddp_broadcast_buffers=false`: these Transformer VLAs do
+not use mutable BatchNorm-style running statistics, while broadcasting immutable
+positional/rotary buffers before every forward adds an unnecessary NCCL
+collective. `ddp_find_unused_parameters=true` remains enabled for policies with
+conditional computation.
+
+The baseline launcher defaults to `num_workers=0`. PyTorch warns that NCCL DDP
+combined with DataLoader workers created through the Linux `fork` start method
+can deadlock; the failed Pi0.5 run used four workers per rank and stalled after
+4,586 otherwise healthy updates. Its logged data time was about 0.003 seconds,
+so removing worker processes should have negligible throughput impact. A future
+worker-enabled configuration must explicitly use a reviewed `spawn` or
+`forkserver` DataLoader context and be validated separately.
 
 ## Post-training contracts
 
@@ -54,7 +67,7 @@ steps. The action-generation objective should be the controlled difference.
    and RNG state. Full-tuned 4B models can make the 90-checkpoint matrix exceed
    2 TB; reserve at least 2.5-3 TB before starting.
 3. The reported remote kernel is 4.19, below Accelerate's recommended 5.5.
-   Complete an 8-GPU DDP smoke run before committing to a 60k run. A hang here
+   Complete an 8-GPU DDP smoke run before committing to a 50k run. A hang here
    is an infrastructure issue; changing code or retrying the entire matrix is
    not an adequate substitute for a supported host kernel.
 4. Confirm that Pi0.5 quantile statistics exist in both dataset metadata files.
@@ -78,7 +91,20 @@ saves a smoke checkpoint outside the final training directory:
 MODE=smoke bash experiments/driftingvla/baselines/run_one.sh pi05 libero 1000
 ```
 
-Run all three 60k seeds sequentially for one model/benchmark pair:
+For a long-NCCL preflight, keep the real 50k schedule but write a temporary
+recovery checkpoint at step 5k. Stop after observing step 5.1k, then resume with
+the formal 30k/40k/50k checkpoint list:
+
+```bash
+MODE=train SAVE_FREQ_OVERRIDE=5000 OUTPUT_ROOT=outputs/baselines_nccl_preflight \
+  bash experiments/driftingvla/baselines/run_one.sh pi05 libero 1000
+
+CHECKPOINT_STEPS_OVERRIDE='[30000,40000,50000]' \
+  OUTPUT_ROOT=outputs/baselines_nccl_preflight \
+  bash experiments/driftingvla/baselines/resume_one.sh pi05 libero 1000
+```
+
+Run all three 50k seeds sequentially for one model/benchmark pair:
 
 ```bash
 MODE=train WANDB_ENABLE=true \
@@ -110,8 +136,8 @@ tree, and DDP synchronization. A practical order is:
 4. X-VLA on LIBERO, then RoboTwin;
 5. GR00T N1.7 on LIBERO, then RoboTwin.
 
-The first long run for each model should be only seed 1000. Evaluate its 20k,
-40k, and 60k checkpoints before spending compute on seeds 1001 and 1002. If all
+The first long run for each model should be only seed 1000. Evaluate its 30k,
+40k, and 50k checkpoints before spending compute on seeds 1001 and 1002. If all
 three checkpoints are uniformly poor, diagnose the model/dataset contract rather
 than multiplying a broken configuration by three seeds.
 

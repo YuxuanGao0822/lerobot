@@ -208,9 +208,13 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     # Create Accelerator if not provided
     # It will automatically detect if running in distributed mode or single-process mode
     # We set step_scheduler_with_optimizer=False to prevent accelerate from adjusting the lr_scheduler steps based on the num_processes
-    # We set find_unused_parameters=True to handle models with conditional computation
+    # Conditional-computation and buffer-broadcast behavior are explicit train-config fields so
+    # long distributed runs can preserve and report the exact DDP contract in their checkpoints.
     if accelerator is None:
-        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+        ddp_kwargs = DistributedDataParallelKwargs(
+            find_unused_parameters=cfg.ddp_find_unused_parameters,
+            broadcast_buffers=cfg.ddp_broadcast_buffers,
+        )
         # Accelerate auto-detects the device based on the available hardware and ignores the policy.device setting.
         # Force the device to be CPU when the active config's device is set to CPU (works for both policy and reward model training).
         force_cpu = cfg.trainable_config.device == "cpu"
@@ -597,7 +601,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             progbar.update(1)
         train_tracker.step()
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0
-        is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
+        if cfg.checkpoint_steps:
+            is_saving_step = step in cfg.checkpoint_steps
+        else:
+            is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_env_eval_step = cfg.env_eval_freq > 0 and step % cfg.env_eval_freq == 0
         is_eval_step = cfg.eval_steps > 0 and eval_dataloader is not None and step % cfg.eval_steps == 0
 

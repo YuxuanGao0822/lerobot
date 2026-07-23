@@ -8,7 +8,7 @@ output_root=${OUTPUT_ROOT:-outputs/baselines}
 models=(pi0 pi05 smolvla xvla groot)
 benchmarks=(libero robotwin)
 seeds=(1000 1001 1002)
-steps=(020000 040000 060000)
+steps=(030000 040000 050000)
 missing=0
 found=0
 
@@ -46,4 +46,3 @@ printf 'Summary: complete_checkpoints=%s/90 missing_required_files=%s\n' "$found
 if ((missing > 0)); then
   exit 1
 fi
-

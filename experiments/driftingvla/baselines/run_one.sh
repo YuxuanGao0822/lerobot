@@ -20,8 +20,10 @@ Environment variables:
   GPU_IDS          CUDA device list (default: 0,1,2,3,4,5,6,7)
   BATCH_SIZE       per-process batch size (default: 4; global batch 32 on 8 GPUs)
   OUTPUT_ROOT      output root (default: outputs/baselines)
+  RUN_STEPS        override 2-step smoke or 50k train target (diagnostics only)
+  SAVE_FREQ_OVERRIDE override smoke/train checkpoint frequency (diagnostics only)
   WANDB_ENABLE     true or false (default: false)
-  NUM_WORKERS      workers per process (default: 4)
+  NUM_WORKERS      workers per process (default: 0 for NCCL fork safety)
   PREFETCH_FACTOR  dataloader prefetch factor (default: 2)
   HF_HOME          optional Hugging Face cache location
 
@@ -67,17 +69,29 @@ gpu_ids=${GPU_IDS:-0,1,2,3,4,5,6,7}
 batch_size=${BATCH_SIZE:-4}
 output_root=${OUTPUT_ROOT:-outputs/baselines}
 wandb_enable=${WANDB_ENABLE:-false}
-num_workers=${NUM_WORKERS:-4}
+num_workers=${NUM_WORKERS:-0}
 prefetch_factor=${PREFETCH_FACTOR:-2}
 
 if [[ "$mode" == "train" ]]; then
-  steps=60000
-  save_freq=20000
+  steps=50000
+  save_freq=10000
   log_freq=100
 else
   steps=2
   save_freq=2
   log_freq=1
+fi
+steps=${RUN_STEPS:-$steps}
+save_freq=${SAVE_FREQ_OVERRIDE:-$save_freq}
+
+if [[ "$mode" == "train" && -z "${RUN_STEPS:-}" && -z "${SAVE_FREQ_OVERRIDE:-}" ]]; then
+  checkpoint_steps='[30000,40000,50000]'
+elif [[ "$mode" == "smoke" ]]; then
+  checkpoint_steps="[${steps}]"
+else
+  # Diagnostic runs use periodic saves so a temporary recovery point can be
+  # written without changing the formal 30k/40k/50k artifact contract.
+  checkpoint_steps='[]'
 fi
 
 dataset_repo=lerobot/libero
@@ -96,16 +110,19 @@ common_args=(
   "--steps=${steps}"
   "--save_checkpoint=true"
   "--save_freq=${save_freq}"
+  "--checkpoint_steps=${checkpoint_steps}"
   "--save_checkpoint_to_hub=false"
   "--output_dir=${run_dir}"
   "--job_name=${model}_${benchmark}_seed${seed}"
   "--seed=${seed}"
+  "--ddp_broadcast_buffers=false"
+  "--ddp_find_unused_parameters=true"
   "--env_eval_freq=0"
   "--eval_steps=0"
   "--log_freq=${log_freq}"
   "--num_workers=${num_workers}"
   "--prefetch_factor=${prefetch_factor}"
-  "--persistent_workers=true"
+  "--persistent_workers=false"
   "--wandb.enable=${wandb_enable}"
   "--wandb.disable_artifact=true"
 )
