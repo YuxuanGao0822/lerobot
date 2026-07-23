@@ -79,6 +79,34 @@ steps. The action-generation objective should be the controlled difference.
    If they do not, stop and fix/augment the remote dataset metadata before
    training; do not silently change Pi0.5 normalization only for one benchmark.
 
+### RoboTwin quantile overlay
+
+The pinned RoboTwin snapshot currently has basic state/action statistics but no
+`q01`/`q99` values. Pi0 and Pi0.5 therefore fail in their first preprocessing
+step even though dataset loading and checkpoint initialization succeed. Do not
+switch only these runs to min/max normalization: that changes the released
+policy's data contract and weakens the baseline comparison.
+
+Prepare a local metadata overlay once. The utility scans only the state and
+action Parquet columns, computes exact dataset-wide quantiles, copies the small
+metadata tree, and symlinks the existing data/video directories. It neither
+duplicates the 79.5 GB snapshot nor pushes anything to the Hub:
+
+```bash
+python experiments/driftingvla/baselines/prepare_robotwin_quantile_overlay.py
+```
+
+The script prints the resulting root. Supply it to every RoboTwin baseline and
+Drift run so all methods share identical normalization statistics:
+
+```bash
+export ROBOTWIN_DATASET_ROOT="${HF_LEROBOT_HOME:-${HF_HOME:-$HOME/.cache/huggingface}/lerobot}/derived/robotwin_unified_quantiles_1287871839fa"
+```
+
+If the downloaded snapshot lives elsewhere, pass explicit source and output
+paths to the preparation utility. Never point `--output-root` at the original
+Hub snapshot because cached blobs must remain immutable.
+
 ## Commands
 
 All examples below are **REMOTE SERVER ONLY**.

@@ -26,6 +26,7 @@ Environment variables:
   NUM_WORKERS      workers per process (default: 0 for NCCL fork safety)
   PREFETCH_FACTOR  dataloader prefetch factor (default: 2)
   HF_HOME          optional Hugging Face cache location
+  ROBOTWIN_DATASET_ROOT optional prepared RoboTwin dataset root with q01/q99 stats
 
 Examples:
   MODE=dry-run bash experiments/driftingvla/baselines/run_one.sh pi05 libero 1000
@@ -104,6 +105,13 @@ if [[ "$benchmark" == "robotwin" ]]; then
   dataset_args=(
     "--dataset.revision=1287871839fae2296bc27b88a5457c3e1eba8e1f"
   )
+  if [[ -n "${ROBOTWIN_DATASET_ROOT:-}" ]]; then
+    if [[ ! -f "${ROBOTWIN_DATASET_ROOT}/meta/stats.json" ]]; then
+      echo "ROBOTWIN_DATASET_ROOT has no meta/stats.json: ${ROBOTWIN_DATASET_ROOT}" >&2
+      exit 2
+    fi
+    dataset_args+=("--dataset.root=${ROBOTWIN_DATASET_ROOT}")
+  fi
 fi
 
 run_dir="${output_root}/${mode}/${benchmark}/${model}/seed_${seed}"
