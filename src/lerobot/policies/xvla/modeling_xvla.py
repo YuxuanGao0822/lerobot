@@ -48,6 +48,45 @@ else:
     Florence2Model = None
 
 
+def _hydrate_xvla_architecture_config(
+    config: PreTrainedConfig | None,
+    pretrained_name_or_path: str | Path,
+    **config_load_kwargs,
+) -> XVLAConfig:
+    """Restore Florence architecture metadata without discarding runtime overrides.
+
+    Dataset post-training builds a runtime config containing dataset-derived
+    input/output features and CLI overrides. The nested Florence vision/text
+    config, however, only exists in the released checkpoint. Load that payload
+    when it is missing while preserving the caller's runtime config object.
+    """
+    if config is None:
+        loaded_config = PreTrainedConfig.from_pretrained(
+            pretrained_name_or_path=pretrained_name_or_path,
+            **config_load_kwargs,
+        )
+        if not isinstance(loaded_config, XVLAConfig):
+            raise ValueError("X-VLA must be initialized from an X-VLA checkpoint.")
+        return loaded_config
+
+    if not isinstance(config, XVLAConfig):
+        raise TypeError(f"XVLAPolicy requires XVLAConfig, got {type(config).__name__}.")
+
+    if not config.florence_config:
+        loaded_config = PreTrainedConfig.from_pretrained(
+            pretrained_name_or_path=pretrained_name_or_path,
+            **config_load_kwargs,
+        )
+        if not isinstance(loaded_config, XVLAConfig):
+            raise ValueError("X-VLA must be initialized from an X-VLA checkpoint.")
+        if not loaded_config.florence_config:
+            raise ValueError("The pretrained X-VLA checkpoint has no Florence architecture config.")
+        config.florence_config = dict(loaded_config.florence_config)
+        config._florence_config_obj = None
+
+    return config
+
+
 class XVLAModel(nn.Module):
     """
     XVLA backbone that stitches Florence-2 embeddings with the temporal/action transformer head.
@@ -443,20 +482,20 @@ class XVLAPolicy(PreTrainedPolicy):
         """
         import safetensors.torch
 
-        # step 1: load config
-        # TODO: jadechoghari, fix this
-        if config is None:
-            config = PreTrainedConfig.from_pretrained(
-                pretrained_name_or_path=pretrained_name_or_path,
-                force_download=force_download,
-                resume_download=resume_download,
-                proxies=proxies,
-                token=token,
-                cache_dir=cache_dir,
-                local_files_only=local_files_only,
-                revision=revision,
-                **kwargs,
-            )
+        # Step 1: retain dataset-derived features and CLI overrides while
+        # restoring the nested Florence architecture metadata from the released
+        # checkpoint when a freshly constructed runtime config omitted it.
+        config = _hydrate_xvla_architecture_config(
+            config,
+            pretrained_name_or_path,
+            force_download=force_download,
+            resume_download=resume_download,
+            proxies=proxies,
+            token=token,
+            cache_dir=cache_dir,
+            local_files_only=local_files_only,
+            revision=revision,
+        )
 
         model_id = str(pretrained_name_or_path)
         instance = cls(config, **kwargs)

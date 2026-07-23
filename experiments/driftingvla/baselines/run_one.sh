@@ -192,8 +192,11 @@ case "$model" in
       domain_id=6
     fi
     policy_args=(
-      "--policy.type=xvla"
-      "--policy.pretrained_path=lerobot/xvla-base"
+      # X-VLA's nested Florence architecture is stored in the checkpoint
+      # config. `policy.path` loads it first and then applies these CLI
+      # post-training overrides; constructing `policy.type=xvla` from defaults
+      # would leave `florence_config` empty.
+      "--policy.path=lerobot/xvla-base"
       "--policy.dtype=bfloat16"
       "--policy.action_mode=auto"
       "--policy.domain_id=${domain_id}"
