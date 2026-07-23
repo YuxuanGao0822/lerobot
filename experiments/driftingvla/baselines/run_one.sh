@@ -105,13 +105,21 @@ if [[ "$benchmark" == "robotwin" ]]; then
   dataset_args=(
     "--dataset.revision=1287871839fae2296bc27b88a5457c3e1eba8e1f"
   )
-  if [[ -n "${ROBOTWIN_DATASET_ROOT:-}" ]]; then
-    if [[ ! -f "${ROBOTWIN_DATASET_ROOT}/meta/stats.json" ]]; then
-      echo "ROBOTWIN_DATASET_ROOT has no meta/stats.json: ${ROBOTWIN_DATASET_ROOT}" >&2
+  hf_lerobot_home=${HF_LEROBOT_HOME:-${HF_HOME:-${HOME}/.cache/huggingface}/lerobot}
+  robotwin_dataset_root=${ROBOTWIN_DATASET_ROOT:-${hf_lerobot_home}/derived/robotwin_unified_quantiles_1287871839fa}
+  if [[ "$mode" != "dry-run" ]]; then
+    if [[ ! -f "${robotwin_dataset_root}/meta/stats.json" ]]; then
+      echo "RoboTwin quantile overlay has no meta/stats.json: ${robotwin_dataset_root}" >&2
+      echo "Run prepare_robotwin_quantile_overlay.py first or set ROBOTWIN_DATASET_ROOT." >&2
       exit 2
     fi
-    dataset_args+=("--dataset.root=${ROBOTWIN_DATASET_ROOT}")
+    if [[ ! -f "${robotwin_dataset_root}/robotwin_quantile_overlay.json" ]]; then
+      echo "RoboTwin root is not a reviewed quantile overlay: ${robotwin_dataset_root}" >&2
+      echo "Refusing to train with missing or unverified q01/q99 metadata." >&2
+      exit 2
+    fi
   fi
+  dataset_args+=("--dataset.root=${robotwin_dataset_root}")
 fi
 
 run_dir="${output_root}/${mode}/${benchmark}/${model}/seed_${seed}"

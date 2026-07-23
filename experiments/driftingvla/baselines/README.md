@@ -144,6 +144,30 @@ MODE=train WANDB_ENABLE=true \
   bash experiments/driftingvla/baselines/launch_group.sh pi05 libero
 ```
 
+Dry-run the complete 30-run matrix without loading models or datasets:
+
+```bash
+MODE=dry-run bash experiments/driftingvla/baselines/launch_matrix.sh
+```
+
+Run the complete matrix sequentially, with every child occupying all eight
+GPUs. The launcher skips formally complete runs but stops on an incomplete run
+directory so recovery is always explicit:
+
+```bash
+MODE=train WANDB_ENABLE=true \
+  bash experiments/driftingvla/baselines/launch_matrix.sh
+```
+
+Use `MODELS`, `BENCHMARKS`, and `SEEDS` to stage the matrix. For example, run
+only the first seed of every model on both benchmarks before committing the
+remaining seeds:
+
+```bash
+MODE=train SEEDS="1000" WANDB_ENABLE=true \
+  bash experiments/driftingvla/baselines/launch_matrix.sh
+```
+
 Resume one interrupted seed from `checkpoints/last` with the same eight-worker
 world size:
 

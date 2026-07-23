@@ -20,6 +20,8 @@ for model in "${models[@]}"; do
         required=(
           "${checkpoint}/pretrained_model/config.json"
           "${checkpoint}/pretrained_model/model.safetensors"
+          "${checkpoint}/pretrained_model/policy_preprocessor.json"
+          "${checkpoint}/pretrained_model/policy_postprocessor.json"
           "${checkpoint}/pretrained_model/train_config.json"
           "${checkpoint}/training_state/optimizer_state.safetensors"
           "${checkpoint}/training_state/training_step.json"
