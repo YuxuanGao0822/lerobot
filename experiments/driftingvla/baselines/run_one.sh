@@ -72,6 +72,13 @@ output_root=${OUTPUT_ROOT:-outputs/baselines}
 wandb_enable=${WANDB_ENABLE:-false}
 num_workers=${NUM_WORKERS:-0}
 prefetch_factor=${PREFETCH_FACTOR:-2}
+ddp_find_unused_parameters=true
+if [[ "$model" == "xvla" ]]; then
+  # X-VLA's full training graph uses every trainable parameter on each batch.
+  # Its 8-GPU smoke run confirmed that unused-parameter discovery only adds an
+  # extra autograd-graph traversal and can be disabled safely.
+  ddp_find_unused_parameters=false
+fi
 
 if [[ "$mode" == "train" ]]; then
   steps=50000
@@ -139,7 +146,7 @@ common_args=(
   "--job_name=${model}_${benchmark}_seed${seed}"
   "--seed=${seed}"
   "--ddp_broadcast_buffers=false"
-  "--ddp_find_unused_parameters=true"
+  "--ddp_find_unused_parameters=${ddp_find_unused_parameters}"
   "--env_eval_freq=0"
   "--eval_steps=0"
   "--log_freq=${log_freq}"
