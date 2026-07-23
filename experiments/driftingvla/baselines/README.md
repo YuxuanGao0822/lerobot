@@ -13,7 +13,7 @@ training run per simulator task:
 | Benchmark | Dataset | Scope |
 |---|---|---|
 | LIBERO | `lerobot/libero` | the four LIBERO suites in the unified dataset |
-| RoboTwin 2.0 | `lerobot/robotwin_unified` | the unified 50-task dataset |
+| RoboTwin 2.0 | `lerobot/robotwin_unified` at commit `1287871839fae2296bc27b88a5457c3e1eba8e1f` | the unified 50-task dataset |
 
 The five baselines are `pi0`, `pi05`, `smolvla`, `xvla`, and `groot`. Every
 model/benchmark pair uses seeds `1000`, `1001`, and `1002`; every seed trains to
@@ -53,6 +53,11 @@ worker-enabled configuration must explicitly use a reviewed `spawn` or
 - GR00T N1.7: `nvidia/GR00T-N1.7-3B`, frozen LLM/vision encoders and trainable
   projector, diffusion action model, and VL action-head layers. LIBERO uses
   `libero_sim`; RoboTwin uses `new_embodiment`.
+
+The public RoboTwin dataset currently exposes its v3 schema on `main` without a
+`v3.0` Hub tag. LeRobot otherwise tries to resolve its default `v3.0` revision
+and fails before downloading `meta/info.json`. The launcher therefore pins the
+snapshot commit above instead of relying on mutable `main`.
 
 Each future Drift run must match its baseline's initialization, trainable
 parameter partition, global batch, optimizer schedule, data, seed, and training

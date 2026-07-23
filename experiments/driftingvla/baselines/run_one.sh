@@ -95,8 +95,15 @@ else
 fi
 
 dataset_repo=lerobot/libero
+dataset_args=()
 if [[ "$benchmark" == "robotwin" ]]; then
   dataset_repo=lerobot/robotwin_unified
+  # The public RoboTwin dataset has no LeRobot `v3.0` tag. Pin the current Hub
+  # commit explicitly so metadata resolution bypasses tag lookup and all paper
+  # runs consume exactly the same 79.5 GB snapshot.
+  dataset_args=(
+    "--dataset.revision=1287871839fae2296bc27b88a5457c3e1eba8e1f"
+  )
 fi
 
 run_dir="${output_root}/${mode}/${benchmark}/${model}/seed_${seed}"
@@ -213,6 +220,7 @@ cmd=(
   "$train_entry"
   "${common_args[@]}"
   "${policy_args[@]}"
+  "${dataset_args[@]}"
 )
 
 printf 'Run: model=%s benchmark=%s seed=%s mode=%s\n' "$model" "$benchmark" "$seed" "$mode"
