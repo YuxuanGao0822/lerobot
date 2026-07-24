@@ -18,11 +18,7 @@ from lerobot.configs import PreTrainedConfig
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 
 
-OneStepMethod = Literal[
-    "dbp_chunk",
-    "dbp_stepwise",
-    "drifting_perdim",
-]
+OneStepMethod = str
 
 
 @PreTrainedConfig.register_subclass("pi05_one_step")
@@ -30,14 +26,14 @@ OneStepMethod = Literal[
 class PI05OneStepConfig(PI05Config):
     """A shared π0.5 architecture with an explicit objective selector."""
 
-    method: OneStepMethod = "drifting_perdim"
+    method: str = "drifting_perdim"
     objective: str = "dbp"
     inference_nfe: int = 1
 
     # Checkpoint provenance. ``fresh_action_expert`` is consumed after the
     # partial load; ``init_label`` remains serialized in trained checkpoints.
     fresh_action_expert: bool = False
-    action_expert_init: Literal["pretrained", "fresh"] | None = None
+    action_expert_init: str | None = None
     init_label: str | None = None
     teacher_checkpoint: str | None = None
     train_full_model: bool = True
@@ -45,7 +41,7 @@ class PI05OneStepConfig(PI05Config):
     # Shared DBP kernel.
     drifting_gen_per_label: int = 8
     drifting_temperatures: tuple[float, ...] = (0.02, 0.05, 0.2)
-    drifting_grouping: Literal["chunk", "stepwise", "perdim"] = "perdim"
+    drifting_grouping: str = "perdim"
     mask_padded_timesteps: bool = True
 
     # Optional KeyStone-style test-time selection. K=1 is the formal main
