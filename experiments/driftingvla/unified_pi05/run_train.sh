@@ -90,7 +90,7 @@ if [[ "$method" != pi05_flow ]]; then
   case "$one_step_method" in
     dbp_chunk|dbp_stepwise|drifting_perdim)
       policy_args+=(
-        "--policy.fresh_action_expert=true"
+        "--policy.fresh_action_expert=${FRESH_ACTION_EXPERT:-true}"
         "--policy.train_expert_only=false"
         "--policy.drifting_gen_per_label=${DRIFTING_G:-8}"
         "--policy.drifting_temperatures=[0.02,0.05,0.2]"
