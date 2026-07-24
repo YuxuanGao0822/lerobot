@@ -106,7 +106,7 @@ fi
 accelerate_cmd+=("--num_processes=${num_processes}")
 
 cmd=(
-  "${accelerate_cmd[@]}" lerobot-train
+  "${accelerate_cmd[@]}" src/lerobot/scripts/lerobot_train.py
   "--batch_size=${batch_size}"
   "--steps=${steps}"
   "--save_checkpoint=true"
