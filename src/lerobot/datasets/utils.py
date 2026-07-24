@@ -335,8 +335,11 @@ def get_repo_versions(repo_id: str) -> list[packaging.version.Version]:
         list[packaging.version.Version]: A list of valid versions found.
     """
     api = HfApi()
-    repo_refs = api.list_repo_refs(repo_id, repo_type="dataset")
-    repo_refs = [b.name for b in repo_refs.branches + repo_refs.tags]
+    try:
+        repo_refs = api.list_repo_refs(repo_id, repo_type="dataset")
+        repo_refs = [b.name for b in repo_refs.branches + repo_refs.tags]
+    except Exception:
+        return []
     repo_versions = []
     for ref in repo_refs:
         with contextlib.suppress(packaging.version.InvalidVersion):
