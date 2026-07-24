@@ -3,6 +3,10 @@
 # REMOTE SERVER ONLY. This launcher loads models/datasets unless MODE=dry-run.
 set -euo pipefail
 
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export TOKENIZERS_PARALLELISM=false
+
 usage() {
   echo "Usage: MODE=dry-run|smoke|train bash $0 METHOD BENCHMARK SEED" >&2
   echo "METHOD: pi05_flow | pi05_dbp_chunk | pi05_dbp_stepwise | pi05_driftingvla" >&2
