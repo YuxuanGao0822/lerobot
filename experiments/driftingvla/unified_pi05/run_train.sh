@@ -28,7 +28,7 @@ case "$mode" in dry-run|smoke|train) ;; *) usage; exit 2 ;; esac
 
 num_processes=${NUM_PROCESSES:-8}
 gpu_ids=${GPU_IDS:-0,1,2,3,4,5,6,7}
-batch_size=${BATCH_SIZE:-4}
+batch_size=${BATCH_SIZE:-1}
 output_root=${OUTPUT_ROOT:-outputs/driftingvla_unified}
 wandb_enable=${WANDB_ENABLE:-false}
 [[ "$num_processes" =~ ^[1-9][0-9]*$ ]] || { echo "NUM_PROCESSES must be a positive integer" >&2; exit 2; }
@@ -45,7 +45,10 @@ else
   log_freq=1
 fi
 
-dataset_args=("--dataset.repo_id=lerobot/libero")
+dataset_args=(
+  "--dataset.repo_id=lerobot/libero"
+  "--dataset.video_backend=${VIDEO_BACKEND:-pyav}"
+)
 if [[ "$benchmark" == robotwin ]]; then
   robotwin_root=${ROBOTWIN_DATASET_ROOT:-}
   if [[ "$mode" != dry-run && -z "$robotwin_root" ]]; then
@@ -55,6 +58,7 @@ if [[ "$benchmark" == robotwin ]]; then
   dataset_args=(
     "--dataset.repo_id=lerobot/robotwin_unified"
     "--dataset.revision=1287871839fae2296bc27b88a5457c3e1eba8e1f"
+    "--dataset.video_backend=${VIDEO_BACKEND:-pyav}"
   )
   [[ -z "$robotwin_root" ]] || dataset_args+=("--dataset.root=${robotwin_root}")
 fi
