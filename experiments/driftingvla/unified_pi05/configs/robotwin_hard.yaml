@@ -1,0 +1,12 @@
+# RoboTwin 2.0 Hard is the demo_randomized condition, not a task category.
+benchmark: robotwin
+dataset_repo: lerobot/robotwin_unified
+task_config: demo_randomized
+condition_label: Hard
+seeds: [1000, 1001, 1002]
+checkpoint_steps: [30000, 40000, 50000]
+primary_checkpoint_step: 50000
+diagnostic_checkpoint_steps: [30000, 40000]
+methods: [pi05_flow, pi05_dbp_chunk, pi05_dbp_stepwise, pi05_driftingvla]
+episodes_per_task: 50
+notes: "REMOTE SERVER ONLY; requires RoboTwin simulator"

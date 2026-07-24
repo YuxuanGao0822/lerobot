@@ -31,6 +31,7 @@ from .pi0_drift.configuration_pi0_drift import PI0DriftConfig as PI0DriftConfig
 from .pi0_fast.configuration_pi0_fast import PI0FastConfig as PI0FastConfig
 from .pi05.configuration_pi05 import PI05Config as PI05Config
 from .pi05_drift.configuration_pi05_drift import PI05DriftConfig as PI05DriftConfig
+from .pi05_one_step.configuration_pi05_one_step import PI05OneStepConfig as PI05OneStepConfig
 from .pretrained import PreTrainedPolicy as PreTrainedPolicy
 from .smolvla.configuration_smolvla import SmolVLAConfig as SmolVLAConfig
 from .smolvla_drift.configuration_smolvla_drift import SmolVLADriftConfig as SmolVLADriftConfig
@@ -64,6 +65,7 @@ __all__ = [
     "PI0FastConfig",
     "PI05Config",
     "PI05DriftConfig",
+    "PI05OneStepConfig",
     "SmolVLAConfig",
     "SmolVLADriftConfig",
     "TDMPCConfig",

@@ -1,0 +1,11 @@
+# Static profiling manifest; measurements must be collected remotely.
+warmup_chunk_generations_per_task: 1
+report_percentiles: [50, 95]
+measurements:
+  [action_call_ms, action_chunk_generation_ms, policy_pipeline_ms, policy_pipeline_rate_hz, configured_nfe,
+   test_time_samples, candidate_equivalent_nfe_per_chunk, expected_action_expert_forwards,
+   optional_profiled_forward_count, peak_memory_allocated_mb, peak_memory_reserved_mb]
+cuda_synchronize: true
+configured_nfe_is_provenance_not_profiler_count: true
+exclude_video_encoding: true
+notes: "REMOTE SERVER ONLY; label CPU timings separately"

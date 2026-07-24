@@ -104,6 +104,7 @@ fi
 
 dataset_repo=lerobot/libero
 dataset_args=()
+rename_args=()
 if [[ "$benchmark" == "robotwin" ]]; then
   dataset_repo=lerobot/robotwin_unified
   # The public RoboTwin dataset has no LeRobot `v3.0` tag. Pin the current Hub
@@ -127,6 +128,16 @@ if [[ "$benchmark" == "robotwin" ]]; then
     fi
   fi
   dataset_args+=("--dataset.root=${robotwin_dataset_root}")
+
+  if [[ "$model" == "xvla" ]]; then
+    # RoboTwin's dataset follows physical camera names, while the released
+    # X-VLA processor declares three generic visual slots. Keep the mapping
+    # local to this model/dataset pair so every other baseline retains its
+    # native feature contract.
+    rename_args=(
+      '--rename_map={"observation.images.cam_high":"observation.images.image","observation.images.cam_left_wrist":"observation.images.image2","observation.images.cam_right_wrist":"observation.images.image3"}'
+    )
+  fi
 fi
 
 run_dir="${output_root}/${mode}/${benchmark}/${model}/seed_${seed}"
@@ -247,6 +258,7 @@ cmd=(
   "${common_args[@]}"
   "${policy_args[@]}"
   "${dataset_args[@]}"
+  "${rename_args[@]}"
 )
 
 printf 'Run: model=%s benchmark=%s seed=%s mode=%s\n' "$model" "$benchmark" "$seed" "$mode"

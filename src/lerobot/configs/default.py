@@ -93,6 +93,9 @@ class EvalConfig:
     recording_repo_id: str | None = None
     # Whether the pushed recording repositories should be private.
     recording_private: bool = False
+    # Number of action-chunk generations excluded from latency summaries in
+    # each evaluated task. Success/reward metrics are never discarded.
+    latency_warmup_chunk_generations: int = 1
 
     def __post_init__(self) -> None:
         if self.recording_repo_id is not None and not self.recording:
@@ -101,6 +104,8 @@ class EvalConfig:
             self.batch_size = self._auto_batch_size()
         if self.batch_size > self.n_episodes:
             self.batch_size = self.n_episodes
+        if self.latency_warmup_chunk_generations < 0:
+            raise ValueError("eval.latency_warmup_chunk_generations must be non-negative.")
 
     def _auto_batch_size(self) -> int:
         """Pick batch_size based on CPU cores, capped by n_episodes."""

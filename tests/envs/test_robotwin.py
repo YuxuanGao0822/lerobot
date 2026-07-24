@@ -280,3 +280,13 @@ def test_all_tasks_are_strings():
 
 def test_no_duplicate_tasks():
     assert len(ROBOTWIN_TASKS) == len(set(ROBOTWIN_TASKS))
+
+
+def test_robotwin_eval_condition_names_are_explicit():
+    """REMOTE TEST REQUIRED: Easy/Hard map to setup conditions, not task classes."""
+    from lerobot.envs.configs import RoboTwinEnvConfig
+
+    assert RoboTwinEnvConfig(task_config="demo_clean").task_config == "demo_clean"
+    assert RoboTwinEnvConfig(task_config="demo_randomized").task_config == "demo_randomized"
+    with pytest.raises(ValueError, match="task_config"):
+        RoboTwinEnvConfig(task_config="easy")

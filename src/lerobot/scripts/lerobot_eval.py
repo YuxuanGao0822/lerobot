@@ -96,6 +96,84 @@ from lerobot.utils.utils import (
 )
 
 
+def _policy_parameter_device(policy: nn.Module) -> torch.device | None:
+    try:
+        return next(policy.parameters()).device
+    except StopIteration:
+        return None
+
+
+def _synchronize_policy_device(policy: nn.Module) -> None:
+    """Synchronize CUDA only around explicitly measured policy regions."""
+    device = _policy_parameter_device(policy)
+    if device is not None and device.type == "cuda":
+        torch.cuda.synchronize(device)
+
+
+def _timing_summary_ms(values_s: list[float]) -> dict[str, float]:
+    """Summarize wall-clock samples expressed in seconds as milliseconds."""
+    array = np.asarray(values_s, dtype=np.float64) * 1000.0
+    if array.size == 0:
+        return {"mean_ms": float("nan"), "p50_ms": float("nan"), "p95_ms": float("nan")}
+    return {
+        "mean_ms": float(array.mean()),
+        "p50_ms": float(np.percentile(array, 50)),
+        "p95_ms": float(np.percentile(array, 95)),
+    }
+
+
+def _rate_hz_from_timing(summary_ms: dict[str, float]) -> float:
+    """Return the policy-side rate implied by mean pipeline latency."""
+    mean_ms = summary_ms["mean_ms"]
+    return 1000.0 / mean_ms if np.isfinite(mean_ms) and mean_ms > 0 else float("nan")
+
+
+def _configured_policy_nfe(policy: nn.Module) -> int | None:
+    """Return declared inference NFE without pretending it is a profiler count."""
+    config = getattr(policy, "config", None)
+    for field in ("inference_nfe", "num_inference_steps"):
+        value = getattr(config, field, None)
+        if isinstance(value, int) and value > 0:
+            return value
+    return None
+
+
+def _configured_test_time_samples(policy: nn.Module) -> int:
+    """Return inference candidate multiplicity; ordinary policies use one."""
+    value = getattr(getattr(policy, "config", None), "test_time_samples", 1)
+    return value if isinstance(value, int) and value > 0 else 1
+
+
+def _exclude_chunk_warmup(
+    action_latency_s: list[float],
+    pipeline_latency_s: list[float],
+    generated_chunk: list[bool],
+    warmup_chunk_generations: int,
+) -> tuple[list[float], list[float], list[bool], int]:
+    """Drop samples through the requested number of cold chunk generations."""
+    if not (
+        len(action_latency_s) == len(pipeline_latency_s) == len(generated_chunk)
+    ):
+        raise ValueError("Latency and generated-chunk sample vectors must have equal length.")
+    if warmup_chunk_generations <= 0:
+        return action_latency_s, pipeline_latency_s, generated_chunk, 0
+
+    seen = 0
+    start = len(generated_chunk)
+    for index, generated in enumerate(generated_chunk):
+        if generated:
+            seen += 1
+            if seen == warmup_chunk_generations:
+                start = index + 1
+                break
+    return (
+        action_latency_s[start:],
+        pipeline_latency_s[start:],
+        generated_chunk[start:],
+        min(seen, warmup_chunk_generations),
+    )
+
+
 def _env_features_to_dataset_features(env_features: dict) -> dict:
     """Convert EnvConfig.features to the dict format expected by LeRobotDataset.create()."""
     features = {}
@@ -245,6 +323,9 @@ def rollout(
     all_rewards = []
     all_successes = []
     all_dones = []
+    all_action_latencies = []
+    all_pipeline_latencies = []
+    all_generated_chunk = []
 
     step = 0
     # Keep track of which environments are done.
@@ -274,12 +355,20 @@ def rollout(
                 except (AttributeError, NotImplementedError):
                     observation["task"] = [""] * env.num_envs
 
+            pipeline_start = time.perf_counter()
             # Apply environment-specific preprocessing (e.g., LiberoProcessorStep for LIBERO)
             observation = env_preprocessor(observation)
 
             observation = preprocessor(observation)
+            generated_chunk = bool(
+                hasattr(policy, "_action_queue") and len(getattr(policy, "_action_queue")) == 0
+            )
+            _synchronize_policy_device(policy)
+            action_start = time.perf_counter()
             with torch.inference_mode():
                 action = policy.select_action(observation)
+            _synchronize_policy_device(policy)
+            action_latency = time.perf_counter() - action_start
             if predicted_latents_callback is not None:
                 predicted_latents_callback(policy)
             action = postprocessor(action)
@@ -290,6 +379,9 @@ def rollout(
 
             # Convert to CPU / numpy.
             action_numpy: np.ndarray = action.to("cpu").numpy()
+            # Device-to-host transfer is part of the deployable policy path and
+            # also provides a synchronization point for asynchronous postprocessing.
+            pipeline_latency = time.perf_counter() - pipeline_start
             assert action_numpy.ndim == 2, "Action dimensions should be (batch, action_dim)"
 
             # Apply the next action.
@@ -359,6 +451,9 @@ def rollout(
             all_rewards.append(torch.from_numpy(reward))
             all_dones.append(torch.from_numpy(done))
             all_successes.append(torch.tensor(successes))
+            all_action_latencies.append(action_latency)
+            all_pipeline_latencies.append(pipeline_latency)
+            all_generated_chunk.append(generated_chunk)
 
             step += 1
             running_success_rate = (
@@ -387,6 +482,9 @@ def rollout(
         "reward": torch.stack(all_rewards, dim=1),
         "success": torch.stack(all_successes, dim=1),
         "done": torch.stack(all_dones, dim=1),
+        "action_latency_s": torch.tensor(all_action_latencies, dtype=torch.float64),
+        "policy_pipeline_latency_s": torch.tensor(all_pipeline_latencies, dtype=torch.float64),
+        "generated_chunk": torch.tensor(all_generated_chunk, dtype=torch.bool),
     }
     if return_observations:
         stacked_observations = {}
@@ -417,6 +515,7 @@ def eval_policy(
     recording_repo_id: str | None = None,
     recording_private: bool = False,
     save_predicted_video: bool = False,
+    latency_warmup_chunk_generations: int = 1,
 ) -> dict:
     """
     Args:
@@ -454,6 +553,10 @@ def eval_policy(
 
     start = time.time()
     policy.eval()
+    profile_device = _policy_parameter_device(policy)
+    if profile_device is not None and profile_device.type == "cuda":
+        torch.cuda.synchronize(profile_device)
+        torch.cuda.reset_peak_memory_stats(profile_device)
 
     # Determine how many batched rollouts we need to get n_episodes. Note that if n_episodes is not evenly
     # divisible by env.num_envs we end up discarding some data in the last batch.
@@ -464,6 +567,9 @@ def eval_policy(
     max_rewards = []
     all_successes = []
     all_seeds = []
+    all_action_latencies = []
+    all_pipeline_latencies = []
+    all_generated_chunk = []
     threads = []  # for video saving threads
     n_episodes_rendered = 0  # for saving the correct number of videos
 
@@ -552,6 +658,9 @@ def eval_policy(
         max_rewards.extend(batch_max_rewards.tolist())
         batch_successes = einops.reduce((rollout_data["success"] * mask), "b n -> b", "any")
         all_successes.extend(batch_successes.tolist())
+        all_action_latencies.extend(rollout_data["action_latency_s"].tolist())
+        all_pipeline_latencies.extend(rollout_data["policy_pipeline_latency_s"].tolist())
+        all_generated_chunk.extend(rollout_data["generated_chunk"].tolist())
         if seeds:
             all_seeds.extend(seeds)
         else:
@@ -636,7 +745,36 @@ def eval_policy(
     for thread in threads:
         thread.join()
 
-    # Compile eval info.
+    # Compile eval info. Raw samples are retained only long enough for exact
+    # cross-task aggregation in `eval_policy_all`; public JSON stores summaries.
+    measured_action_latencies, measured_pipeline_latencies, measured_generated_chunk, excluded_warmup = (
+        _exclude_chunk_warmup(
+            all_action_latencies,
+            all_pipeline_latencies,
+            all_generated_chunk,
+            latency_warmup_chunk_generations,
+        )
+    )
+    chunk_latencies = [
+        value
+        for value, generated in zip(
+            measured_action_latencies, measured_generated_chunk, strict=True
+        )
+        if generated
+    ]
+    configured_nfe = _configured_policy_nfe(policy)
+    test_time_samples = _configured_test_time_samples(policy)
+    pipeline_summary = _timing_summary_ms(measured_pipeline_latencies)
+    if profile_device is not None and profile_device.type == "cuda":
+        peak_memory_allocated_mb = float(
+            torch.cuda.max_memory_allocated(profile_device) / (1024**2)
+        )
+        peak_memory_reserved_mb = float(
+            torch.cuda.max_memory_reserved(profile_device) / (1024**2)
+        )
+    else:
+        peak_memory_allocated_mb = None
+        peak_memory_reserved_mb = None
     info = {
         "per_episode": [
             {
@@ -662,6 +800,28 @@ def eval_policy(
             "pc_success": float(np.nanmean(all_successes[:n_episodes]) * 100),
             "eval_s": time.time() - start,
             "eval_ep_s": (time.time() - start) / n_episodes,
+            "action_call_latency": _timing_summary_ms(measured_action_latencies),
+            "action_chunk_generation_latency": _timing_summary_ms(chunk_latencies),
+            "policy_pipeline_latency": pipeline_summary,
+            "policy_pipeline_rate_hz": _rate_hz_from_timing(pipeline_summary),
+            "peak_memory_allocated_mb": peak_memory_allocated_mb,
+            "peak_memory_reserved_mb": peak_memory_reserved_mb,
+            "policy_select_calls": len(measured_action_latencies),
+            "action_chunk_generations": len(chunk_latencies),
+            "latency_warmup_chunk_generations_excluded": excluded_warmup,
+            "configured_nfe": configured_nfe,
+            "test_time_samples": test_time_samples,
+            "candidate_equivalent_nfe_per_chunk": (
+                configured_nfe * test_time_samples if configured_nfe is not None else None
+            ),
+            "expected_action_expert_forwards": (
+                len(chunk_latencies) * configured_nfe if configured_nfe is not None else None
+            ),
+        },
+        "_timing_samples": {
+            "action_latency_s": measured_action_latencies,
+            "pipeline_latency_s": measured_pipeline_latencies,
+            "generated_chunk": measured_generated_chunk,
         },
     }
 
@@ -786,6 +946,7 @@ def eval_main(cfg: EvalPipelineConfig):
             return_episode_data=False,
             start_seed=cfg.seed,
             max_parallel_tasks=cfg.env.max_parallel_tasks,
+            latency_warmup_chunk_generations=cfg.eval.latency_warmup_chunk_generations,
             recording_dir=recording_dir,
             env_features=cfg.env.features if cfg.eval.recording else None,
             recording_repo_id=cfg.eval.recording_repo_id,
@@ -815,9 +976,35 @@ class TaskMetrics(TypedDict):
     successes: list[bool]
     video_paths: list[str]
     predicted_video_paths: list[str]
+    action_call_latency: dict[str, float]
+    action_chunk_generation_latency: dict[str, float]
+    policy_pipeline_latency: dict[str, float]
+    policy_pipeline_rate_hz: float
+    peak_memory_allocated_mb: float | None
+    peak_memory_reserved_mb: float | None
+    policy_select_calls: int
+    action_chunk_generations: int
+    latency_warmup_chunk_generations_excluded: int
+    configured_nfe: int | None
+    test_time_samples: int
+    candidate_equivalent_nfe_per_chunk: int | None
+    expected_action_expert_forwards: int | None
+    action_latency_s: list[float]
+    pipeline_latency_s: list[float]
+    generated_chunk: list[bool]
 
 
-ACC_KEYS = ("sum_rewards", "max_rewards", "successes", "video_paths", "predicted_video_paths")
+TIMING_SAMPLE_KEYS = ("action_latency_s", "pipeline_latency_s", "generated_chunk")
+RESOURCE_KEYS = ("peak_memory_allocated_mb", "peak_memory_reserved_mb")
+ACC_KEYS = (
+    "sum_rewards",
+    "max_rewards",
+    "successes",
+    "video_paths",
+    "predicted_video_paths",
+    *TIMING_SAMPLE_KEYS,
+    *RESOURCE_KEYS,
+)
 
 
 def eval_one(
@@ -837,6 +1024,7 @@ def eval_one(
     env_features: dict | None = None,
     recording_repo_id: str | None = None,
     recording_private: bool = False,
+    latency_warmup_chunk_generations: int = 1,
 ) -> TaskMetrics:
     """Evaluates one task_id of one suite using the provided vec env."""
 
@@ -858,15 +1046,36 @@ def eval_one(
         env_features=env_features,
         recording_repo_id=recording_repo_id,
         recording_private=recording_private,
+        latency_warmup_chunk_generations=latency_warmup_chunk_generations,
     )
 
     per_episode = task_result["per_episode"]
+    aggregated = task_result["aggregated"]
+    timing_samples = task_result["_timing_samples"]
     return TaskMetrics(
         sum_rewards=[ep["sum_reward"] for ep in per_episode],
         max_rewards=[ep["max_reward"] for ep in per_episode],
         successes=[ep["success"] for ep in per_episode],
         video_paths=task_result.get("video_paths", []),
         predicted_video_paths=task_result.get("predicted_video_paths", []),
+        action_call_latency=aggregated["action_call_latency"],
+        action_chunk_generation_latency=aggregated["action_chunk_generation_latency"],
+        policy_pipeline_latency=aggregated["policy_pipeline_latency"],
+        policy_pipeline_rate_hz=aggregated["policy_pipeline_rate_hz"],
+        peak_memory_allocated_mb=aggregated["peak_memory_allocated_mb"],
+        peak_memory_reserved_mb=aggregated["peak_memory_reserved_mb"],
+        policy_select_calls=aggregated["policy_select_calls"],
+        action_chunk_generations=aggregated["action_chunk_generations"],
+        latency_warmup_chunk_generations_excluded=aggregated[
+            "latency_warmup_chunk_generations_excluded"
+        ],
+        configured_nfe=aggregated["configured_nfe"],
+        test_time_samples=aggregated["test_time_samples"],
+        candidate_equivalent_nfe_per_chunk=aggregated["candidate_equivalent_nfe_per_chunk"],
+        expected_action_expert_forwards=aggregated["expected_action_expert_forwards"],
+        action_latency_s=timing_samples["action_latency_s"],
+        pipeline_latency_s=timing_samples["pipeline_latency_s"],
+        generated_chunk=timing_samples["generated_chunk"],
     )
 
 
@@ -889,6 +1098,7 @@ def run_one(
     env_features: dict | None = None,
     recording_repo_id: str | None = None,
     recording_private: bool = False,
+    latency_warmup_chunk_generations: int = 1,
 ):
     """
     Run eval_one for a single (task_group, task_id, env).
@@ -923,6 +1133,7 @@ def run_one(
         env_features=env_features,
         recording_repo_id=task_repo_id,
         recording_private=recording_private,
+        latency_warmup_chunk_generations=latency_warmup_chunk_generations,
     )
 
     if max_episodes_rendered > 0:
@@ -949,6 +1160,7 @@ def eval_policy_all(
     return_episode_data: bool = False,
     start_seed: int | None = None,
     max_parallel_tasks: int = 1,
+    latency_warmup_chunk_generations: int = 1,
 ) -> dict:
     """
     Evaluate a nested `envs` dict: {task_group: {task_id: vec_env}}.
@@ -990,6 +1202,14 @@ def eval_policy_all(
             if paths:
                 group_acc[group][key].extend(paths)
                 overall[key].extend(paths)
+        for key in TIMING_SAMPLE_KEYS:
+            _append(key, metrics.get(key))
+        for key in RESOURCE_KEYS:
+            _append(key, metrics.get(key))
+
+    def _public_task_metrics(metrics: dict) -> dict:
+        """Strip raw timing vectors while retaining exact per-task summaries."""
+        return {key: value for key, value in metrics.items() if key not in TIMING_SAMPLE_KEYS}
 
     # Choose runner (sequential vs threaded)
     task_runner = partial(
@@ -1008,6 +1228,7 @@ def eval_policy_all(
         env_features=env_features,
         recording_repo_id=recording_repo_id,
         recording_private=recording_private,
+        latency_warmup_chunk_generations=latency_warmup_chunk_generations,
     )
 
     if max_parallel_tasks <= 1:
@@ -1020,7 +1241,9 @@ def eval_policy_all(
             try:
                 tg, tid, metrics = task_runner(task_group, task_id, env)
                 _accumulate_to(tg, metrics)
-                per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+                per_task_infos.append(
+                    {"task_group": tg, "task_id": tid, "metrics": _public_task_metrics(metrics)}
+                )
             finally:
                 env.close()
                 # Prefetch next task's workers *after* closing current env to prevent
@@ -1041,7 +1264,9 @@ def eval_policy_all(
                 try:
                     tg, tid, metrics = fut.result()
                     _accumulate_to(tg, metrics)
-                    per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
+                    per_task_infos.append(
+                        {"task_group": tg, "task_id": tid, "metrics": _public_task_metrics(metrics)}
+                    )
                 finally:
                     env.close()
 
@@ -1055,6 +1280,16 @@ def eval_policy_all(
     # compute per-group aggregates
     groups_aggregated = {}
     for group, acc in group_acc.items():
+        chunk_latencies = [
+            value
+            for value, generated in zip(
+                acc["action_latency_s"], acc["generated_chunk"], strict=True
+            )
+            if generated
+        ]
+        configured_nfe = _configured_policy_nfe(policy)
+        test_time_samples = _configured_test_time_samples(policy)
+        pipeline_summary = _timing_summary_ms(acc["pipeline_latency_s"])
         groups_aggregated[group] = {
             "avg_sum_reward": _agg_from_list(acc["sum_rewards"]),
             "avg_max_reward": _agg_from_list(acc["max_rewards"]),
@@ -1062,9 +1297,40 @@ def eval_policy_all(
             "n_episodes": len(acc["sum_rewards"]),
             "video_paths": list(acc["video_paths"]),
             "predicted_video_paths": list(acc["predicted_video_paths"]),
+            "action_call_latency": _timing_summary_ms(acc["action_latency_s"]),
+            "action_chunk_generation_latency": _timing_summary_ms(chunk_latencies),
+            "policy_pipeline_latency": pipeline_summary,
+            "policy_pipeline_rate_hz": _rate_hz_from_timing(pipeline_summary),
+            "peak_memory_allocated_mb": (
+                max(acc["peak_memory_allocated_mb"]) if acc["peak_memory_allocated_mb"] else None
+            ),
+            "peak_memory_reserved_mb": (
+                max(acc["peak_memory_reserved_mb"]) if acc["peak_memory_reserved_mb"] else None
+            ),
+            "policy_select_calls": len(acc["action_latency_s"]),
+            "action_chunk_generations": len(chunk_latencies),
+            "configured_nfe": configured_nfe,
+            "test_time_samples": test_time_samples,
+            "candidate_equivalent_nfe_per_chunk": (
+                configured_nfe * test_time_samples if configured_nfe is not None else None
+            ),
+            "expected_action_expert_forwards": (
+                len(chunk_latencies) * configured_nfe if configured_nfe is not None else None
+            ),
+            "latency_warmup_chunk_generations_per_task": latency_warmup_chunk_generations,
         }
 
     # overall aggregates
+    overall_chunk_latencies = [
+        value
+        for value, generated in zip(
+            overall["action_latency_s"], overall["generated_chunk"], strict=True
+        )
+        if generated
+    ]
+    configured_nfe = _configured_policy_nfe(policy)
+    test_time_samples = _configured_test_time_samples(policy)
+    overall_pipeline_summary = _timing_summary_ms(overall["pipeline_latency_s"])
     overall_agg = {
         "avg_sum_reward": _agg_from_list(overall["sum_rewards"]),
         "avg_max_reward": _agg_from_list(overall["max_rewards"]),
@@ -1074,6 +1340,27 @@ def eval_policy_all(
         "eval_ep_s": (time.time() - start_t) / max(1, len(overall["sum_rewards"])),
         "video_paths": list(overall["video_paths"]),
         "predicted_video_paths": list(overall["predicted_video_paths"]),
+        "action_call_latency": _timing_summary_ms(overall["action_latency_s"]),
+        "action_chunk_generation_latency": _timing_summary_ms(overall_chunk_latencies),
+        "policy_pipeline_latency": overall_pipeline_summary,
+        "policy_pipeline_rate_hz": _rate_hz_from_timing(overall_pipeline_summary),
+        "peak_memory_allocated_mb": (
+            max(overall["peak_memory_allocated_mb"]) if overall["peak_memory_allocated_mb"] else None
+        ),
+        "peak_memory_reserved_mb": (
+            max(overall["peak_memory_reserved_mb"]) if overall["peak_memory_reserved_mb"] else None
+        ),
+        "policy_select_calls": len(overall["action_latency_s"]),
+        "action_chunk_generations": len(overall_chunk_latencies),
+        "configured_nfe": configured_nfe,
+        "test_time_samples": test_time_samples,
+        "candidate_equivalent_nfe_per_chunk": (
+            configured_nfe * test_time_samples if configured_nfe is not None else None
+        ),
+        "expected_action_expert_forwards": (
+            len(overall_chunk_latencies) * configured_nfe if configured_nfe is not None else None
+        ),
+        "latency_warmup_chunk_generations_per_task": latency_warmup_chunk_generations,
     }
 
     return {

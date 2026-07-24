@@ -1,0 +1,22 @@
+# Static ablation manifest; each row must retain the same seed/checkpoint protocol.
+ablations:
+  - name: grouping
+    values: [chunk, stepwise, perdim]
+  - name: drifting_gen_per_label
+    values: [2, 4, 8]
+  - name: action_horizon
+    values: [25, 50, 100]
+  - name: action_expert_init
+    values: [fresh, pretrained]
+  - name: train_scope
+    values: [expert_only, full_model]
+  - name: padded_timestep_mask
+    values: [enabled, disabled_control]
+    config_field: mask_padded_timesteps
+  - name: drifting_temperatures
+    values: [[0.05], [0.02, 0.05], [0.02, 0.05, 0.2]]
+  - name: keystone_test_time_samples
+    values: [1, 4, 8]
+    config_field: test_time_samples
+    main_protocol_value: 1
+notes: "REMOTE SERVER ONLY; no ablation result is implied by this manifest"

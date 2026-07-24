@@ -231,29 +231,31 @@ ROBOTWIN_TASKS: tuple[str, ...] = (
 )
 
 
-_ROBOTWIN_SETUP_CACHE: dict[str, dict[str, Any]] = {}
+_ROBOTWIN_SETUP_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 
 
-def _load_robotwin_setup_kwargs(task_name: str) -> dict[str, Any]:
+def _load_robotwin_setup_kwargs(task_name: str, task_config: str = "demo_clean") -> dict[str, Any]:
     """Build the kwargs dict RoboTwin's setup_demo expects.
 
     Mirrors the config loading done by RoboTwin's ``script/eval_policy.py``:
-    reads ``task_config/demo_clean.yml``, resolves the embodiment file from
+    reads ``task_config/<task_config>.yml``, resolves the embodiment file from
     ``_embodiment_config.yml``, loads the robot's own ``config.yml``, and
     reads camera dimensions from ``_camera_config.yml``.
 
     Uses ``aloha-agilex`` single-robot dual-arm by default (the only embodiment
     used by beat_block_hammer and most smoke-test tasks).
     """
-    if task_name in _ROBOTWIN_SETUP_CACHE:
-        return dict(_ROBOTWIN_SETUP_CACHE[task_name])
+    if task_config not in ("demo_clean", "demo_randomized"):
+        raise ValueError(f"Unsupported RoboTwin task_config: {task_config!r}")
+    cache_key = (task_name, task_config)
+    if cache_key in _ROBOTWIN_SETUP_CACHE:
+        return dict(_ROBOTWIN_SETUP_CACHE[cache_key])
 
     import os
 
     import yaml  # type: ignore[import-untyped]
     from envs import CONFIGS_PATH  # type: ignore[import-not-found]
 
-    task_config = "demo_clean"
     with open(os.path.join(CONFIGS_PATH, f"{task_config}.yml"), encoding="utf-8") as f:
         args = yaml.safe_load(f)
 
@@ -291,7 +293,7 @@ def _load_robotwin_setup_kwargs(task_name: str) -> dict[str, Any]:
     args["task_name"] = task_name
     args["task_config"] = task_config
 
-    _ROBOTWIN_SETUP_CACHE[task_name] = args
+    _ROBOTWIN_SETUP_CACHE[cache_key] = args
     return dict(args)
 
 
@@ -358,6 +360,7 @@ class RoboTwinEnv(gym.Env):
         episode_length: int = DEFAULT_EPISODE_LENGTH,
         render_mode: str = "rgb_array",
         action_mode: str = "joint",
+        task_config: str = "demo_clean",
     ):
         super().__init__()
         self.task_name = task_name
@@ -370,6 +373,9 @@ class RoboTwinEnv(gym.Env):
         if action_mode not in ("joint", "ee"):
             raise ValueError(f"action_mode must be 'joint' or 'ee'; got {action_mode!r}")
         self.action_mode = action_mode
+        if task_config not in ("demo_clean", "demo_randomized"):
+            raise ValueError(f"Unsupported RoboTwin task_config: {task_config!r}")
+        self.task_config = task_config
         self._action_dim = EEF_ACTION_DIM if action_mode == "ee" else ACTION_DIM
         self._init_eef_pose: np.ndarray | None = None
         self.camera_names = list(camera_names)
@@ -466,7 +472,7 @@ class RoboTwinEnv(gym.Env):
         assert self._env is not None  # set by _ensure_env() above
 
         actual_seed = self.episode_index if seed is None else seed
-        setup_kwargs = _load_robotwin_setup_kwargs(self.task_name)
+        setup_kwargs = _load_robotwin_setup_kwargs(self.task_name, self.task_config)
         setup_kwargs.update(seed=actual_seed, is_test=True)
         with torch.enable_grad():
             self._env.setup_demo(**setup_kwargs)
@@ -558,6 +564,7 @@ def _make_env_fns(
     observation_width: int,
     episode_length: int,
     action_mode: str = "joint",
+    task_config: str = "demo_clean",
 ) -> list[Callable[[], RoboTwinEnv]]:
     """Return n_envs factory callables for a single task."""
 
@@ -571,6 +578,7 @@ def _make_env_fns(
             observation_width=observation_width,
             episode_length=episode_length,
             action_mode=action_mode,
+            task_config=task_config,
         )
 
     return [partial(_make_one, i) for i in range(n_envs)]
@@ -585,6 +593,7 @@ def create_robotwin_envs(
     observation_width: int = DEFAULT_CAMERA_W,
     episode_length: int = DEFAULT_EPISODE_LENGTH,
     action_mode: str = "joint",
+    task_config: str = "demo_clean",
 ) -> dict[str, dict[int, Any]]:
     """Create vectorized RoboTwin 2.0 environments.
 
@@ -636,6 +645,7 @@ def create_robotwin_envs(
             observation_width=observation_width,
             episode_length=episode_length,
             action_mode=action_mode,
+            task_config=task_config,
         )
         if is_async:
             lazy = _LazyAsyncVectorEnv(fns, cached_obs_space, cached_act_space, cached_metadata)

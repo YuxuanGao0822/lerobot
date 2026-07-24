@@ -1,0 +1,53 @@
+# Canonical provenance manifest. `run_train.sh` translates these fields to
+# LeRobot CLI arguments. This file is documentation/configuration, not executed locally.
+methods:
+  pi05_flow:
+    policy_type: pi05
+    objective: flow_matching
+    action_expert_init: pretrained
+    inference_nfe: 10
+  pi05_flow_naive_1step:
+    policy_type: pi05
+    objective: unchanged_flow_matching
+    action_expert_init: pretrained
+    extra_training: false
+    inference_nfe: 1
+  pi05_dbp_chunk:
+    policy_type: pi05_one_step
+    method: dbp_chunk
+    objective: dbp
+    action_expert_init: fresh
+    grouping: chunk
+    tensor: "[1,B,G,HD]"
+    inference_nfe: 1
+    test_time_samples: 1
+  pi05_dbp_stepwise:
+    policy_type: pi05_one_step
+    method: dbp_stepwise
+    objective: dbp
+    action_expert_init: fresh
+    grouping: stepwise
+    tensor: "[H,B,G,D]"
+    inference_nfe: 1
+    test_time_samples: 1
+  pi05_driftingvla:
+    policy_type: pi05_one_step
+    method: drifting_perdim
+    objective: dbp
+    action_expert_init: fresh
+    grouping: perdim
+    tensor: "[D,B,G,H]"
+    inference_nfe: 1
+    test_time_samples: 1
+benchmarks:
+  libero:
+    train_dataset: lerobot/libero
+    eval_suites: [libero_spatial, libero_object, libero_goal, libero_10]
+  robotwin:
+    train_dataset: lerobot/robotwin_unified
+    easy: demo_clean
+    hard: demo_randomized
+seeds: [1000, 1001, 1002]
+checkpoints: [30000, 40000, 50000]
+primary_checkpoint: 50000
+checkpoint_policy: "50k is the primary endpoint; 30k/40k are learning-curve diagnostics, not test-selected alternatives"

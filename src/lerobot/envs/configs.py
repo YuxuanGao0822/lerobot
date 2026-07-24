@@ -771,6 +771,9 @@ class RoboTwinEnvConfig(EnvConfig):
     # "joint": 14-d joint-space control. "ee": 16-d end-effector-pose deltas executed via CuRobo IK
     # (for world-model policies like LingBot-VA that predict per-arm xyz+quaternion+gripper poses).
     action_mode: str = "joint"
+    # RoboTwin 2.0 evaluation condition. These names are configuration
+    # conditions, not task categories: Easy=demo_clean, Hard=demo_randomized.
+    task_config: str = "demo_clean"
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(14,)),
@@ -787,6 +790,11 @@ class RoboTwinEnvConfig(EnvConfig):
     )
 
     def __post_init__(self):
+        if self.task_config not in ("demo_clean", "demo_randomized"):
+            raise ValueError(
+                "RoboTwin task_config must be 'demo_clean' (Easy) or "
+                f"'demo_randomized' (Hard), got {self.task_config!r}."
+            )
         if self.action_mode == "ee":
             self.features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(16,))
         cam_list = [c.strip() for c in self.camera_names.split(",") if c.strip()]
@@ -832,6 +840,7 @@ class RoboTwinEnvConfig(EnvConfig):
             observation_width=self.observation_width,
             episode_length=self.episode_length,
             action_mode=self.action_mode,
+            task_config=self.task_config,
         )
 
 

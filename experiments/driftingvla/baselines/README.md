@@ -48,8 +48,10 @@ worker-enabled configuration must explicitly use a reviewed `spawn` or
   expert and state projection trainable) from `lerobot/smolvla_base`.
 - X-VLA: full recommended adaptation from `lerobot/xvla-base`, BF16, automatic
   action padding, domain 3 for LIBERO and domain 6 for RoboTwin. The policy is
-  constructed with each current dataset's visual feature names, so RoboTwin's
-  three camera keys do not need a rename map.
+  initialized with the released generic visual slots. For RoboTwin training the
+  launcher maps `cam_high`, `cam_left_wrist`, and `cam_right_wrist` to X-VLA's
+  `image`, `image2`, and `image3` slots respectively. This mapping is scoped to
+  X-VLA × RoboTwin and is serialized in the resulting processor/config.
 - GR00T N1.7: `nvidia/GR00T-N1.7-3B`, frozen LLM/vision encoders and trainable
   projector, diffusion action model, and VL action-head layers. LIBERO uses
   `libero_sim`; RoboTwin uses `new_embodiment`.
