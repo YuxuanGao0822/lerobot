@@ -7,9 +7,9 @@ set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 mode=${MODE:-dry-run}
-methods=${METHODS:-"pi05_flow pi05_dbp_chunk pi05_dbp_stepwise pi05_driftingvla"}
+methods=${METHODS:-"pi05_flow pi05_driftingvla"}
 benchmarks=${BENCHMARKS:-"libero robotwin"}
-seeds=${SEEDS:-"1000 1001 1002"}
+seeds=${SEEDS:-"42 43 44"}
 
 case "$mode" in dry-run|smoke|train) ;; *) echo "MODE must be dry-run, smoke, or train" >&2; exit 2 ;; esac
 

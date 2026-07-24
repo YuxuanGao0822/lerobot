@@ -35,8 +35,8 @@ wandb_enable=${WANDB_ENABLE:-false}
 
 if [[ "$mode" == train ]]; then
   steps=${RUN_STEPS:-50000}
-  save_freq=${SAVE_FREQ_OVERRIDE:-10000}
-  checkpoint_steps=${CHECKPOINT_STEPS_OVERRIDE:-'[30000,40000,50000]'}
+  save_freq=${SAVE_FREQ_OVERRIDE:-50000}
+  checkpoint_steps=${CHECKPOINT_STEPS_OVERRIDE:-'[50000]'}
   log_freq=100
 else
   steps=${RUN_STEPS:-2}
