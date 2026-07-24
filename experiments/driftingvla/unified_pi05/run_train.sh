@@ -66,6 +66,7 @@ policy_args=(
   "--policy.gradient_checkpointing=true"
   "--policy.compile_model=false"
   "--policy.train_expert_only=false"
+  "--policy.push_to_hub=false"
 )
 
 if [[ "$method" != pi05_flow ]]; then
@@ -84,6 +85,7 @@ if [[ "$method" != pi05_flow ]]; then
     "--policy.compile_model=false"
     "--policy.drifting_grouping=${grouping}"
     "--policy.test_time_samples=1"
+    "--policy.push_to_hub=false"
   )
   case "$one_step_method" in
     dbp_chunk|dbp_stepwise|drifting_perdim)
@@ -112,6 +114,7 @@ cmd=(
   "--save_checkpoint=true"
   "--save_freq=${save_freq}"
   "--checkpoint_steps=${checkpoint_steps}"
+  "--save_checkpoint_to_hub=false"
   "--output_dir=${run_dir}"
   "--job_name=${method}_${benchmark}_seed${seed}"
   "--seed=${seed}"
